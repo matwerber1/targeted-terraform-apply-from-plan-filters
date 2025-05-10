@@ -263,7 +263,7 @@
             filteredResults = Object.values(consolidatedResults).map(item => ({
                 ...item,
                 changeType: getChangeType(item.resourceChange.change.actions),
-                targetFlag: `-target=${item.resourceChange.address} \\`,
+                targetFlag: ` -target=${item.resourceChange.address} \\`,
                 address: item.resourceChange.address, // Include address for sorting
                 // Add a property to easily check if selected for sorting (though sorting by selected state might be less common)
                 selected: selectedAddresses.has(item.resourceChange.address) ? 'Yes' : 'No'
