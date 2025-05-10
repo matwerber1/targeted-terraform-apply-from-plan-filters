@@ -1,0 +1,461 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Terraform Plan Analyzer</title>
+    <style>
+        body {
+            font-family: sans-serif;
+            margin: 20px;
+            background-color: #f4f4f4;
+            color: #333;
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+        .container {
+            background-color: #fff;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 0 10px rgba(0,0,0,0.1);
+        }
+        h1, h2 {
+            color: #555;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+        }
+        input[type="file"], input[type="text"], select {
+            width: calc(100% - 22px);
+            padding: 10px;
+            margin-bottom: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            box-sizing: border-box;
+        }
+        button {
+            background-color: #007bff;
+            color: white;
+            padding: 10px 15px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            margin-right: 5px;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        button.danger {
+            background-color: #dc3545;
+        }
+        button.danger:hover {
+            background-color: #c82333;
+        }
+        .filter-group {
+            border: 1px solid #ccc;
+            padding: 15px;
+            margin-bottom: 15px;
+            border-radius: 5px;
+            background-color: #f9f9f9;
+        }
+        .filter-group h3 {
+            margin-top: 0;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .filter-item {
+            margin-bottom: 10px;
+            padding-bottom: 10px;
+            border-bottom: 1px dashed #eee;
+        }
+        .filter-item:last-child {
+            border-bottom: none;
+            margin-bottom: 0;
+            padding-bottom: 0;
+        }
+        .value-filter-entry {
+            display: flex;
+            gap: 5px;
+            align-items: center;
+            margin-bottom: 5px;
+        }
+        .value-filter-entry input[type="text"] {
+            width: 35%;
+            margin-bottom: 0;
+        }
+        .value-filter-entry select {
+            width: 20%;
+            margin-bottom: 0;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+        }
+        th, td {
+            border: 1px solid #ddd;
+            padding: 8px;
+            text-align: left;
+            vertical-align: top;
+        }
+        th {
+            background-color: #e9ecef;
+        }
+        .actions-filter label {
+            display: inline-block;
+            margin-right: 10px;
+            font-weight: normal;
+        }
+        .actions-filter input[type="checkbox"] {
+            width: auto;
+            margin-right: 5px;
+        }
+        #status {
+            margin-top: 10px;
+            font-style: italic;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="container">
+        <h1>Terraform Plan Analyzer</h1>
+        <label for="fileInput">Load Terraform Plan JSON:</label>
+        <input type="file" id="fileInput" accept=".json">
+        <div id="status">No file loaded.</div>
+    </div>
+
+    <div class="container">
+        <h2>Filter Groups</h2>
+        <div id="filterGroupsContainer">
+            <!-- Filter groups will be added here -->
+        </div>
+        <button id="addFilterGroupBtn">Add Filter Group</button>
+        <button id="applyFiltersBtn" style="background-color: #28a745;">Apply All Filters</button>
+    </div>
+
+    <div class="container">
+        <h2>Results</h2>
+        <button id="copyCsvBtn">Copy Table as CSV</button>
+        <table id="resultsTable">
+            <thead>
+                <tr>
+                    <th>Matching Group(s)</th>
+                    <th>Address</th>
+                    <th>Change Type</th>
+                    <th>Terraform Apply Command</th>
+                </tr>
+            </thead>
+            <tbody>
+                <!-- Results will be populated here -->
+            </tbody>
+        </table>
+        <div id="resultsSummary"></div>
+    </div>
+
+    <script>
+        let resourceChanges = [];
+        let filterGroupCounter = 0;
+
+        document.getElementById('fileInput').addEventListener('change', handleFile);
+        document.getElementById('addFilterGroupBtn').addEventListener('click', addFilterGroup);
+        document.getElementById('applyFiltersBtn').addEventListener('click', applyAllFilters);
+        document.getElementById('copyCsvBtn').addEventListener('click', copyTableToCsv);
+
+        function updateStatus(message, isError = false) {
+            const statusEl = document.getElementById('status');
+            statusEl.textContent = message;
+            statusEl.style.color = isError ? 'red' : 'green';
+        }
+
+        function handleFile(event) {
+            const file = event.target.files[0];
+            if (!file) {
+                updateStatus('No file selected.', true);
+                return;
+            }
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                try {
+                    const data = JSON.parse(e.target.result);
+                    if (data && data.resource_changes && Array.isArray(data.resource_changes)) {
+                        resourceChanges = data.resource_changes;
+                        updateStatus(`Loaded ${resourceChanges.length} resource changes from ${file.name}.`);
+                        // Optionally, clear existing filters or apply them automatically
+                        document.getElementById('resultsTable').querySelector('tbody').innerHTML = '';
+                        document.getElementById('resultsSummary').textContent = '';
+                    } else {
+                        resourceChanges = [];
+                        updateStatus('Invalid Terraform plan JSON: "resource_changes" array not found or invalid.', true);
+                    }
+                } catch (error) {
+                    resourceChanges = [];
+                    updateStatus(`Error parsing JSON: ${error.message}`, true);
+                }
+            };
+            reader.onerror = function() {
+                updateStatus(`Error reading file: ${reader.error}`, true);
+            }
+            reader.readAsText(file);
+        }
+
+        function addFilterGroup() {
+            filterGroupCounter++;
+            const groupId = `group-${filterGroupCounter}`;
+            const groupName = `Filter Group ${filterGroupCounter}`;
+
+            const groupDiv = document.createElement('div');
+            groupDiv.className = 'filter-group';
+            groupDiv.id = groupId;
+            groupDiv.innerHTML = `
+                <h3>
+                    <span>${groupName}</span>
+                    <button class="danger remove-group-btn" data-group-id="${groupId}">Remove Group</button>
+                </h3>
+                <div class="filter-item">
+                    <label>Change Type:</label>
+                    <div class="actions-filter">
+                        <label><input type="checkbox" name="action-${groupId}" value="create"> Create</label>
+                        <label><input type="checkbox" name="action-${groupId}" value="delete"> Delete</label>
+                        <label><input type="checkbox" name="action-${groupId}" value="replace"> Replace</label>
+                        <label><input type="checkbox" name="action-${groupId}" value="no-op"> No-op</label>
+                    </div>
+                </div>
+                <div class="filter-item">
+                    <label for="type-${groupId}">Resource Type (comma-separated, use * for wildcard):</label>
+                    <input type="text" id="type-${groupId}" placeholder="e.g., aws_instance, aws_s3_bucket*, *security_group*">
+                </div>
+                <div class="filter-item">
+                    <label for="name-${groupId}">Resource Name (comma-separated, use * for wildcard):</label>
+                    <input type="text" id="name-${groupId}" placeholder="e.g., main, web-app-*, *database">
+                </div>
+                <div class="filter-item">
+                    <label>Values (in 'change.after' or 'change.before' for delete):</label>
+                    <div class="value-filters-container-${groupId}">
+                        <!-- Value filters added here -->
+                    </div>
+                    <button class="add-value-filter-btn" data-group-id="${groupId}" data-container-class="value-filters-container-${groupId}">Add Value Filter</button>
+                </div>
+                <div class="filter-item">
+                    <label for="index-${groupId}">Resource Index (comma-separated, e.g., 0, 1, primary):</label>
+                    <input type="text" id="index-${groupId}" placeholder="e.g., 0, 1, primary">
+                </div>
+            `;
+            document.getElementById('filterGroupsContainer').appendChild(groupDiv);
+
+            groupDiv.querySelector('.remove-group-btn').addEventListener('click', function() {
+                document.getElementById(this.dataset.groupId).remove();
+            });
+            groupDiv.querySelector('.add-value-filter-btn').addEventListener('click', function() {
+                addValueFilterEntry(this.dataset.containerClass);
+            });
+        }
+        
+        function addValueFilterEntry(containerClass) {
+            const container = document.querySelector(`.${containerClass}`);
+            const entryDiv = document.createElement('div');
+            entryDiv.className = 'value-filter-entry';
+            entryDiv.innerHTML = `
+                <select class="value-filter-condition">
+                    <option value="include">Include if</option>
+                    <option value="exclude">Exclude if</option>
+                </select>
+                <input type="text" class="value-filter-key" placeholder="Key (e.g., tags.Environment)">
+                <input type="text" class="value-filter-value" placeholder="Value (e.g., production)">
+                <button class="danger remove-value-filter-btn" style="padding: 5px 8px;">X</button>
+            `;
+            container.appendChild(entryDiv);
+            entryDiv.querySelector('.remove-value-filter-btn').addEventListener('click', function() {
+                entryDiv.remove();
+            });
+        }
+
+        function getChangeType(actions) {
+            if (!actions || actions.length === 0) return 'unknown';
+            const hasCreate = actions.includes('create');
+            const hasDelete = actions.includes('delete');
+            const hasNoOp = actions.includes('no-op');
+
+            if (hasCreate && hasDelete) return 'replace';
+            if (hasCreate) return 'create';
+            if (hasDelete) return 'delete';
+            if (hasNoOp) return 'no-op';
+            return 'update'; // Covers ["update"]
+        }
+
+        function wildcardToRegex(pattern) {
+            return new RegExp('^' + pattern.split('*').map(escapeRegex).join('.*') + '$', 'i');
+        }
+
+        function escapeRegex(string) {
+            return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        }
+
+        // Helper to get a nested property value
+        function getNestedValue(obj, path) {
+            if (!obj || !path) return undefined;
+            return path.split('.').reduce((acc, part) => acc && acc[part], obj);
+        }
+
+
+        function applyAllFilters() {
+            if (resourceChanges.length === 0) {
+                updateStatus('No resource changes loaded to filter.', true);
+                return;
+            }
+
+            const filterGroupElements = document.querySelectorAll('.filter-group');
+            if (filterGroupElements.length === 0) {
+                updateStatus('No filter groups defined. Add at least one filter group.', true);
+                document.getElementById('resultsTable').querySelector('tbody').innerHTML = '';
+                document.getElementById('resultsSummary').textContent = '0 items matched.';
+                return;
+            }
+
+            const allMatchedItemsMap = new Map(); // address -> { item, matchingGroups: Set }
+
+            filterGroupElements.forEach(groupEl => {
+                const groupId = groupEl.id;
+                const groupName = groupEl.querySelector('h3 > span').textContent;
+                
+                const selectedActions = Array.from(groupEl.querySelectorAll(`input[name="action-${groupId}"]:checked`)).map(cb => cb.value);
+                const typePatterns = groupEl.querySelector(`#type-${groupId}`).value.split(',').map(s => s.trim()).filter(s => s);
+                const namePatterns = groupEl.querySelector(`#name-${groupId}`).value.split(',').map(s => s.trim()).filter(s => s);
+                const indexValues = groupEl.querySelector(`#index-${groupId}`).value.split(',').map(s => s.trim()).filter(s => s);
+
+                const valueFilters = Array.from(groupEl.querySelectorAll(`.value-filters-container-${groupId} .value-filter-entry`)).map(entry => ({
+                    condition: entry.querySelector('.value-filter-condition').value,
+                    key: entry.querySelector('.value-filter-key').value.trim(),
+                    value: entry.querySelector('.value-filter-value').value.trim()
+                })).filter(vf => vf.key);
+
+
+                resourceChanges.forEach(item => {
+                    let matchesGroup = true;
+
+                    // 1. Filter by Action
+                    if (selectedActions.length > 0) {
+                        const itemChangeType = getChangeType(item.change.actions);
+                        if (!selectedActions.includes(itemChangeType)) {
+                            matchesGroup = false;
+                        }
+                    }
+                    
+                    // 2. Filter by Type
+                    if (matchesGroup && typePatterns.length > 0) {
+                        if (!typePatterns.some(pattern => wildcardToRegex(pattern).test(item.type))) {
+                            matchesGroup = false;
+                        }
+                    }
+
+                    // 3. Filter by Name
+                    if (matchesGroup && namePatterns.length > 0) {
+                        if (!namePatterns.some(pattern => wildcardToRegex(pattern).test(item.name))) {
+                            matchesGroup = false;
+                        }
+                    }
+
+                    // 4. Filter by Values
+                    if (matchesGroup && valueFilters.length > 0) {
+                        const itemChangeType = getChangeType(item.change.actions);
+                        const valuesToInspect = itemChangeType === 'delete' ? item.change.before : item.change.after;
+                        
+                        if (!valuesToInspect) { // If there are no values to inspect (e.g. 'after' is null for a delete without 'before')
+                            if (valueFilters.some(vf => vf.condition === 'include')) { // If any include filter exists, this can't match
+                                matchesGroup = false;
+                            }
+                            // Exclude filters are fine if valuesToInspect is null, as the key won't be found.
+                        } else {
+                            for (const vf of valueFilters) {
+                                const actualValue = getNestedValue(valuesToInspect, vf.key);
+                                const valueMatch = actualValue !== undefined && String(actualValue) === vf.value;
+
+                                if (vf.condition === 'include' && !valueMatch) {
+                                    matchesGroup = false;
+                                    break;
+                                }
+                                if (vf.condition === 'exclude' && valueMatch) {
+                                    matchesGroup = false;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+
+                    // 5. Filter by Index
+                    if (matchesGroup && indexValues.length > 0) {
+                        const itemIndex = item.index !== undefined ? String(item.index) : null;
+                        if (itemIndex === null || !indexValues.includes(itemIndex)) {
+                            matchesGroup = false;
+                        }
+                    }
+
+                    // If item matches all criteria for this group
+                    if (matchesGroup) {
+                        if (!allMatchedItemsMap.has(item.address)) {
+                            allMatchedItemsMap.set(item.address, { item: item, matchingGroups: new Set() });
+                        }
+                        allMatchedItemsMap.get(item.address).matchingGroups.add(groupName);
+                    }
+                });
+            });
+
+            renderResultsTable(allMatchedItemsMap);
+        }
+
+        function renderResultsTable(matchedItemsMap) {
+            const tbody = document.getElementById('resultsTable').querySelector('tbody');
+            tbody.innerHTML = ''; // Clear previous results
+
+            if (matchedItemsMap.size === 0) {
+                document.getElementById('resultsSummary').textContent = '0 items matched across all filter groups.';
+                return;
+            }
+
+            matchedItemsMap.forEach(data => {
+                const item = data.item;
+                const matchingGroups = Array.from(data.matchingGroups).join(', ');
+                
+                const row = tbody.insertRow();
+                row.insertCell().textContent = matchingGroups;
+                row.insertCell().textContent = item.address;
+                row.insertCell().textContent = getChangeType(item.change.actions);
+                row.insertCell().textContent = `terraform apply -target="${item.address}"`;
+            });
+            document.getElementById('resultsSummary').textContent = `${matchedItemsMap.size} unique item(s) matched.`;
+        }
+
+        function copyTableToCsv() {
+            const table = document.getElementById('resultsTable');
+            let csv = [];
+            const rows = table.querySelectorAll('tr');
+            
+            for (let i = 0; i < rows.length; i++) {
+                const row = [], cols = rows[i].querySelectorAll('td, th');
+                for (let j = 0; j < cols.length; j++) {
+                    // Escape double quotes by doubling them, and wrap if content contains comma, newline or double quote
+                    let cellData = cols[j].innerText.replace(/"/g, '""');
+                    if (cellData.search(/("|,|\n)/g) >= 0) {
+                        cellData = `"${cellData}"`;
+                    }
+                    row.push(cellData);
+                }
+                csv.push(row.join(','));
+            }
+
+            const csvContent = csv.join('\n');
+            navigator.clipboard.writeText(csvContent)
+                .then(() => updateStatus('Table copied to clipboard as CSV!'))
+                .catch(err => updateStatus('Failed to copy: ' + err, true));
+        }
+
+        // Add one default filter group on load
+        addFilterGroup();
+
+    </script>
+</body>
+</html>
