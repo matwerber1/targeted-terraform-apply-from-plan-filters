@@ -6,6 +6,10 @@ Generate a targeted 'terraform apply' command that only includes targets matchin
 
 Vibe-coded with Gemini 2.5 Pro / Gemini Canvas. 
 
+## Try it out
+
+https://matwerber1.github.io/targeted-terraform-apply-from-plan-filters
+
 ## Usage
 
 1. Generate a human-readable terraform plan with `terraform show -json plan | jq '.' > plan.pretty.json`
